@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leitner Sheet - Lernsystem</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & ReactDOM CDNs -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel für JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .animate-in { animation: fadeIn 0.5s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        /**
+         * KONFIGURATION: Deine Google Apps Script URL
+         */
+        const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwsOgO9MCOz1Rmv7m1EVV26nl29H4RS2D4_KqBKCh_HmiZnnbDAu5V1EaxZEwnUzkX9/exec";
+
+        // --- Hilfskomponente für Lucide Icons in React ohne Build-Step ---
+        const Icon = ({ name, size = 24, className = "" }) => {
+            const iconRef = useRef(null);
+            useEffect(() => {
+                if (iconRef.current) {
+                    iconRef.current.innerHTML = lucide.createIcons({
+                        icons: { [name]: lucide[name] },
+                        attrs: { width: size, height: size, class: className }
+                    });
+                }
+            }, [name, size, className]);
+            return <span ref={iconRef} className="inline-block flex items-center justify-center"></span>;
+        };
+
+        // --- UI Komponenten ---
+        const Card = ({ children, className = "" }) => (
+            <div className={`bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden ${className}`}>{children}</div>
+        );
+
+        const Button = ({ onClick, children, variant = 'primary', className = "", disabled = false, type = "button" }) => {
+            const variants = {
+                primary: 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg shadow-blue-100',
+                secondary: 'bg-slate-200 text-slate-800 hover:bg-slate-300',
+                danger: 'bg-red-100 text-red-600 hover:bg-red-200',
+                outline: 'border-2 border-blue-600 text-blue-600 hover:bg-blue-50',
+                ghost: 'text-slate-500 hover:bg-slate-100'
+            };
+            return (
+                <button 
+                    type={type}
+                    disabled={disabled}
+                    onClick={onClick} 
+                    className={`px-4 py-2 rounded-lg font-bold transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 ${variants[variant]} ${className}`}
+                >
+                    {children}
+                </button>
+            );
+        };
+
+        // --- Hauptanwendung ---
+        function App() {
+            const [user, setUser] = useState(null);
+            const [view, setView] = useState('auth'); 
+            const [lectures, setLectures] = useState([]);
+            const [cards, setCards] = useState([]);
+            const [progress, setProgress] = useState([]);
+            const [currentLecture, setCurrentLecture] = useState(null);
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
+
+            useEffect(() => {
+                const saved = localStorage.getItem('leitner_session');
+                if (saved && SCRIPT_URL) {
+                    try {
+                        const u = JSON.parse(saved);
+                        setUser(u);
+                        refreshData();
+                    } catch(e) {
+                        localStorage.removeItem('leitner_session');
+                    }
+                }
+            }, []);
+
+            const refreshData = async () => {
+                if (!SCRIPT_URL) return;
+                setLoading(true);
+                try {
+                    const resp = await fetch(SCRIPT_URL);
+                    const data = await resp.json();
+                    setLectures(data.lectures || []);
+                    setCards(data.cards || []);
+                    setProgress(data.progress || []);
+                    if (view === 'auth') setView('dashboard');
+                } catch (e) {
+                    setError("Verbindung zum Google Sheet fehlgeschlagen.");
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const apiPost = async (action, payload) => {
+                if (!SCRIPT_URL) return;
+                setLoading(true);
+                try {
+                    await fetch(SCRIPT_URL, {
+                        method: 'POST',
+                        mode: 'no-cors', // Wichtig für Google Apps Script POST Redirects
+                        body: JSON.stringify({ 
+                            action, 
+                            username: user?.name, 
+                            userUid: user?.uid,
+                            ...payload 
+                        })
+                    });
+                    // Da 'no-cors' keine Antwort lesen kann, warten wir kurz und refreshen
+                    setTimeout(refreshData, 500);
+                } catch (e) {
+                    setError("Aktion konnte nicht gespeichert werden.");
+                    setLoading(false);
+                }
+            };
+
+            const handleLogin = async (username) => {
+                if (username.length < 3) {
+                    setError("Name zu kurz.");
+                    return;
+                }
+                setLoading(true);
+                try {
+                    const resp = await fetch(SCRIPT_URL, {
+                        method: 'POST',
+                        body: JSON.stringify({ action: 'login', username })
+                    });
+                    const res = await resp.json();
+                    const userData = { name: username, uid: res.uid };
+                    setUser(userData);
+                    localStorage.setItem('leitner_session', JSON.stringify(userData));
+                    await refreshData();
+                } catch (e) {
+                    // Fallback falls der JSON Login scheitert (CORS), generiere lokale UID
+                    const userData = { name: username, uid: 'user_' + Math.random().toString(36).substr(2, 9) };
+                    setUser(userData);
+                    localStorage.setItem('leitner_session', JSON.stringify(userData));
+                    setView('dashboard');
+                    refreshData();
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            if (!SCRIPT_URL || SCRIPT_URL.includes("...")) return <SetupRequired />;
+
+            return (
+                <div className="min-h-screen">
+                    {user && (
+                        <nav className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
+                            <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+                                <div className="flex items-center gap-2 cursor-pointer" onClick={() => setView('dashboard')}>
+                                    <div className="bg-blue-600 p-2 rounded-xl text-white shadow-lg shadow-blue-100">
+                                        <Icon name="Layers" size={20} />
+                                    </div>
+                                    <span className="font-black text-xl tracking-tighter">LEITNER SHEET</span>
+                                </div>
+                                
+                                <div className="flex items-center gap-3">
+                                    <div className="hidden sm:flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-full">
+                                        <Icon name="UserCircle" size={18} className="text-blue-500" />
+                                        <span className="text-sm font-bold">{user.name}</span>
+                                    </div>
+                                    <button onClick={() => { setUser(null); localStorage.removeItem('leitner_session'); setView('auth'); }} className="p-2 text-slate-400 hover:text-red-500">
+                                        <Icon name="LogOut" size={20} />
+                                    </button>
+                                </div>
+                            </div>
+                        </nav>
+                    )}
+
+                    <main className="max-w-6xl mx-auto px-4 py-8">
+                        {loading && (
+                            <div className="fixed inset-0 bg-white/60 backdrop-blur-sm z-[100] flex items-center justify-center">
+                                <div className="animate-spin text-blue-600"><Icon name="RefreshCw" size={48} /></div>
+                            </div>
+                        )}
+
+                        {view === 'auth' && <AuthView onLogin={handleLogin} error={error} />}
+                        
+                        {view === 'dashboard' && (
+                            <Dashboard 
+                                lectures={lectures} 
+                                onSelect={(l) => { setCurrentLecture(l); setView('lecture-detail'); }}
+                                onCreate={(name) => apiPost('addLecture', { name })}
+                            />
+                        )}
+
+                        {view === 'lecture-detail' && currentLecture && (
+                            <LectureDetail 
+                                lecture={currentLecture}
+                                cards={cards.filter(c => c.lectureId == currentLecture.id)}
+                                userProgress={progress.filter(p => p.userUid === user.uid)}
+                                onBack={() => setView('dashboard')}
+                                onAddCard={(q, a) => apiPost('addCard', { lectureId: currentLecture.id, q, a })}
+                                onToggleSelect={(cardId, active) => apiPost('toggleSelection', { cardId, active })}
+                                onUpdateBox={(cardId, box) => apiPost('updateBox', { cardId, box })}
+                                onDeleteCard={(cardId) => apiPost('deleteCard', { cardId })}
+                                userId={user.uid}
+                            />
+                        )}
+                    </main>
+                </div>
+            );
+        }
+
+        // --- Ansichten ---
+
+        function AuthView({ onLogin, error }) {
+            const [name, setName] = useState('');
+            return (
+                <div className="max-w-md mx-auto pt-20 animate-in">
+                    <Card className="p-8 shadow-2xl border-0">
+                        <h2 className="text-3xl font-black text-center mb-6 text-slate-800">Lern-Login</h2>
+                        <input 
+                            type="text" placeholder="Dein Benutzername"
+                            className="w-full p-4 border rounded-2xl mb-4 focus:ring-2 focus:ring-blue-500 outline-none font-bold"
+                            value={name} onChange={e => setName(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && onLogin(name)}
+                        />
+                        {error && <p className="text-red-500 text-xs font-bold mb-4 px-1">{error}</p>}
+                        <Button className="w-full py-4 text-lg" onClick={() => onLogin(name)}>App starten</Button>
+                    </Card>
+                </div>
+            );
+        }
+
+        function Dashboard({ lectures, onSelect, onCreate }) {
+            const [showAdd, setShowAdd] = useState(false);
+            const [name, setName] = useState('');
+
+            return (
+                <div className="space-y-8 animate-in">
+                    <div className="flex justify-between items-end">
+                        <h2 className="text-4xl font-black tracking-tight text-slate-800">Fächer</h2>
+                        <Button onClick={() => setShowAdd(true)}><Icon name="Plus" size={18} /> Neues Fach</Button>
+                    </div>
+
+                    {showAdd && (
+                        <Card className="p-6 bg-blue-50 border-blue-100">
+                            <div className="flex flex-col sm:flex-row gap-2">
+                                <input 
+                                    placeholder="z.B. Elektrotechnik" className="flex-1 p-3 rounded-xl border focus:ring-2 focus:ring-blue-500 outline-none font-medium"
+                                    value={name} onChange={e => setName(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && (onCreate(name), setName(''), setShowAdd(false))}
+                                />
+                                <div className="flex gap-2">
+                                    <Button onClick={() => { onCreate(name); setName(''); setShowAdd(false); }}>Erstellen</Button>
+                                    <Button variant="ghost" onClick={() => setShowAdd(false)}>Abbruch</Button>
+                                </div>
+                            </div>
+                        </Card>
+                    )}
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {lectures.map(l => (
+                            <Card key={l.id} className="p-6 hover:border-blue-500 cursor-pointer group transition-all hover:shadow-xl hover:shadow-blue-50" onClick={() => onSelect(l)}>
+                                <div className="bg-blue-100 w-12 h-12 rounded-2xl flex items-center justify-center text-blue-600 mb-4 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                                    <Icon name="BookOpen" size={24} />
+                                </div>
+                                <h3 className="text-xl font-black text-slate-800 leading-tight">{l.name}</h3>
+                                <p className="text-[10px] font-black text-slate-400 mt-4 uppercase tracking-widest">Erstellt von: {l.createdBy}</p>
+                            </Card>
+                        ))}
+                    </div>
+                </div>
+            );
+        }
+
+        function LectureDetail({ lecture, cards, userProgress, onBack, onAddCard, onToggleSelect, onUpdateBox, onDeleteCard, userId }) {
+            const [tab, setTab] = useState('study');
+            const [selectedBox, setSelectedBox] = useState(1);
+            const [currentIndex, setCurrentIndex] = useState(0);
+            const [revealed, setRevealed] = useState(false);
+            const [newQ, setNewQ] = useState('');
+            const [newA, setNewA] = useState('');
+
+            const progressMap = useMemo(() => {
+                const map = {};
+                (userProgress || []).forEach(p => { map[p.cardId] = p; });
+                return map;
+            }, [userProgress]);
+
+            const activeCards = cards.filter(c => progressMap[c.id]?.active);
+            const boxCards = activeCards.filter(c => (progressMap[c.id]?.box || 1) === selectedBox);
+
+            const handleStudy = (isGood) => {
+                const card = boxCards[currentIndex];
+                const currentBox = progressMap[card.id]?.box || 1;
+                const nextBox = isGood ? Math.min(currentBox + 1, 4) : Math.max(currentBox - 1, 1);
+                onUpdateBox(card.id, nextBox);
+                setRevealed(false);
+                if (currentIndex < boxCards.length - 1) setCurrentIndex(currentIndex + 1);
+                else setCurrentIndex(0);
+            };
+
+            return (
+                <div className="space-y-6 animate-in">
+                    <div className="bg-white p-6 rounded-3xl shadow-sm flex flex-col md:flex-row items-center justify-between gap-4 border border-slate-100">
+                        <div className="flex items-center gap-4">
+                            <button onClick={onBack} className="p-3 bg-slate-100 rounded-2xl hover:bg-blue-600 hover:text-white transition-all"><Icon name="ArrowLeft" size={20} /></button>
+                            <h2 className="text-3xl font-black text-slate-800">{lecture.name}</h2>
+                        </div>
+                        <div className="flex bg-slate-100 p-1.5 rounded-2xl">
+                            <button onClick={() => setTab('study')} className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${tab === 'study' ? 'bg-white shadow-md text-blue-600' : 'text-slate-500'}`}>Lernen</button>
+                            <button onClick={() => setTab('pool')} className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${tab === 'pool' ? 'bg-white shadow-md text-blue-600' : 'text-slate-500'}`}>Pool</button>
+                        </div>
+                    </div>
+
+                    {tab === 'study' && (
+                        <div className="max-w-2xl mx-auto space-y-6">
+                            <div className="flex justify-center gap-2">
+                                {[1, 2, 3, 4].map(b => (
+                                    <button key={b} onClick={() => { setSelectedBox(b); setCurrentIndex(0); setRevealed(false); }}
+                                        className={`flex-1 p-3 rounded-2xl border-2 transition-all ${selectedBox === b ? 'border-slate-800 bg-white shadow-lg -translate-y-1' : 'opacity-40 grayscale bg-slate-100'}`}>
+                                        <span className="text-[10px] font-black uppercase block tracking-tighter">Box {b}</span>
+                                        <span className="text-xl font-black">{activeCards.filter(c => (progressMap[c.id]?.box || 1) === b).length}</span>
+                                    </button>
+                                ))}
+                            </div>
+
+                            {boxCards.length > 0 ? (
+                                <div className="space-y-4">
+                                    <Card className="p-12 min-h-[350px] flex flex-col items-center justify-center text-center relative overflow-hidden group">
+                                        <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity"><Icon name="Layers" size={100} /></div>
+                                        <div className="text-sm font-black text-slate-300 uppercase tracking-widest mb-8">Frage</div>
+                                        <div className="text-2xl font-bold mb-8 text-slate-800">{boxCards[currentIndex].q}</div>
+                                        {revealed && (
+                                            <div className="w-full animate-in">
+                                                <hr className="mb-8 border-slate-100" />
+                                                <div className="text-sm font-black text-blue-300 uppercase tracking-widest mb-4">Antwort</div>
+                                                <div className="text-2xl font-black text-blue-600">{boxCards[currentIndex].a}</div>
+                                            </div>
+                                        )}
+                                    </Card>
+                                    {!revealed ? <Button className="w-full py-5 text-xl" onClick={() => setRevealed(true)}>ANTWORT ZEIGEN</Button> : (
+                                        <div className="flex gap-4">
+                                            <button onClick={() => handleStudy(false)} className="flex-1 bg-red-50 text-red-600 py-5 rounded-2xl font-black border-2 border-red-100 hover:bg-red-100 transition-colors">Wiederholen</button>
+                                            <button onClick={() => handleStudy(true)} className="flex-1 bg-green-500 text-white py-5 rounded-2xl font-black shadow-lg hover:bg-green-600 transition-colors">Gewusst</button>
+                                        </div>
+                                    )}
+                                </div>
+                            ) : (
+                                <div className="text-center py-24 bg-white rounded-[3rem] border-2 border-dashed border-slate-200 text-slate-400 font-bold">
+                                    Box {selectedBox} ist aktuell leer.
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {tab === 'pool' && (
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                           <Card className="p-6 h-fit sticky top-24 shadow-lg border-blue-50">
+                              <h3 className="font-black mb-6 text-slate-800 flex items-center gap-2 text-blue-600"><Icon name="Plus" size={20} /> Karte erstellen</h3>
+                              <div className="space-y-4">
+                                <textarea placeholder="Vorderseite (Frage)..." className="w-full p-4 border border-slate-200 rounded-2xl bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500 transition-all resize-none" rows="3" value={newQ} onChange={e => setNewQ(e.target.value)} />
+                                <textarea placeholder="Rückseite (Antwort)..." className="w-full p-4 border border-slate-200 rounded-2xl bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500 transition-all resize-none" rows="3" value={newA} onChange={e => setNewA(e.target.value)} />
+                                <Button className="w-full py-3" onClick={() => { onAddCard(newQ, newA); setNewQ(''); setNewA(''); }}>Karte Speichern</Button>
+                              </div>
+                           </Card>
+                           <div className="lg:col-span-2 space-y-4">
+                              <div className="flex items-center justify-between ml-2">
+                                <h3 className="font-black text-xl text-slate-800">Gesamter Pool</h3>
+                                <span className="text-[10px] font-black uppercase text-slate-400 bg-slate-100 px-3 py-1 rounded-full">Alle Karten</span>
+                              </div>
+                              {cards.map(c => (
+                                <Card key={c.id} className={`p-5 border-l-8 transition-all ${progressMap[c.id]?.active ? 'border-l-blue-600' : 'border-l-slate-200 opacity-70'}`}>
+                                  <div className="flex justify-between items-start gap-4">
+                                    <div className="flex-1">
+                                      <div className="font-bold text-slate-800 text-lg leading-tight">{c.q}</div>
+                                      <div className="text-sm text-slate-500 mt-2 italic line-clamp-2">{c.a}</div>
+                                      <div className="text-[9px] font-black text-slate-400 mt-4 uppercase">Erstellt von: {c.createdBy}</div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <button 
+                                        onClick={() => onToggleSelect(c.id, !progressMap[c.id]?.active)}
+                                        className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all border-2 ${progressMap[c.id]?.active ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-100' : 'bg-white text-slate-400 border-slate-100 hover:border-blue-200 hover:text-blue-500'}`}
+                                      >
+                                        {progressMap[c.id]?.active ? 'Im System' : 'Wählen'}
+                                      </button>
+                                      {c.creatorUid === userId && (
+                                        <button onClick={() => onDeleteCard(c.id)} className="p-2 text-slate-300 hover:text-red-500 transition-colors">
+                                          <Icon name="Trash2" size={18} />
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                </Card>
+                              ))}
+                              {cards.length === 0 && (
+                                <div className="text-center py-20 bg-white rounded-3xl border-2 border-dashed border-slate-200 text-slate-400 font-bold">
+                                  Bisher keine Karten in diesem Fach.
+                                </div>
+                              )}
+                           </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        function SetupRequired() {
+            return (
+                <div className="max-w-md mx-auto mt-20 animate-in">
+                    <Card className="p-8 border-yellow-200 bg-yellow-50/50 shadow-xl">
+                        <div className="flex justify-center mb-6 text-yellow-600"><Icon name="AlertTriangle" size={48} /></div>
+                        <h2 className="text-2xl font-black mb-2 text-center text-slate-800">Setup erforderlich</h2>
+                        <p className="text-slate-600 text-sm mb-6 text-center font-medium">Bitte konfiguriere zuerst dein Google Sheet Backend und trage die Web-App-URL im Code ein.</p>
+                        <div className="text-xs font-mono bg-white p-4 rounded-xl border border-slate-200 text-slate-400 select-all overflow-x-auto">
+                            const SCRIPT_URL = "...";
+                        </div>
+                    </Card>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
