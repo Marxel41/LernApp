@@ -82,7 +82,6 @@
                     setLectures(normalize(data.lectures));
                     setCards(normalize(data.cards));
                     setProgress(normalize(data.progress));
-                    // Lösche die IDs aus der Pending-Liste erst, wenn die neuen Daten da sind
                     setPendingSyncIds(new Set());
                 } catch (e) {
                     console.error("Refresh failed", e);
@@ -101,8 +100,8 @@
                         body: JSON.stringify({ action: 'login', username, password })
                     });
                     const res = await resp.json();
-                    if (res.success) {
-                        const userData = { name: res.username, uid: res.uid };
+                    if (res.success && res.uid) {
+                        const userData = { name: res.username, uid: String(res.uid) };
                         setUser(userData);
                         localStorage.setItem('leitner_session', JSON.stringify(userData));
                         await refreshData();
@@ -128,7 +127,6 @@
                         mode: 'no-cors', 
                         body: JSON.stringify({ action, username: user?.name, userUid: user?.uid, ...payload })
                     });
-                    // Sync nach Verzögerung
                     setTimeout(() => refreshData(true), 2500);
                 } catch (e) {
                     console.error("BG Sync failed", e);
@@ -157,7 +155,7 @@
                         <nav className="bg-white border-b border-slate-200 sticky top-0 z-50 p-4 shadow-sm flex justify-between items-center h-16">
                             <div className="flex items-center gap-2 cursor-pointer" onClick={() => setView('dashboard')}>
                                 <div className="bg-blue-600 p-1.5 rounded-lg text-white"><Icon name="Layers" size={18}/></div>
-                                <span className="font-black text-lg">SEMESTER 2</span>
+                                <span className="font-black text-lg uppercase tracking-tighter">SEMESTER 2</span>
                             </div>
                             
                             <div className="flex items-center gap-4">
@@ -167,7 +165,7 @@
                                         <span>Synchronisiere...</span>
                                     </div>
                                 )}
-                                <span className="text-sm font-bold text-slate-600 hidden sm:inline">{user.name}</span>
+                                <span className="text-sm font-bold text-slate-600 hidden sm:inline">Hallo {user.name}</span>
                                 <button onClick={() => { setUser(null); localStorage.removeItem('leitner_session'); setView('auth'); }} className="text-slate-400 hover:text-red-500 transition-colors">
                                     <Icon name="LogOut" size={20}/>
                                 </button>
@@ -187,9 +185,9 @@
                         {user && view === 'dashboard' && (
                             <div className="animate-in space-y-6">
                                 <div className="flex justify-between items-center">
-                                    <h1 className="text-3xl font-black">Deine Fächer</h1>
+                                    <h1 className="text-3xl font-black">Vorlesungen</h1>
                                     <Button onClick={() => { 
-                                        const n = prompt("Name des Fachs:"); 
+                                        const n = prompt("Name der Vorlesung:"); 
                                         if(n) apiPostBackground('addLecture', {name: n}, () => {
                                             const newL = { id: 'temp_'+Date.now(), name: n, createdby: user.name };
                                             setLectures(prev => [...prev, newL]);
@@ -257,7 +255,7 @@
                         <div className="flex justify-center mb-4 text-blue-600"><Icon name="UserCircle" size={48} /></div>
                         <h2 className="text-2xl font-black text-center mb-6">Login</h2>
                         <div className="space-y-4">
-                            <input type="text" placeholder="Name" className="w-full p-3 border rounded-xl outline-none font-bold" value={name} onChange={e => setName(e.target.value)} />
+                            <input type="text" placeholder="Benutzername" className="w-full p-3 border rounded-xl outline-none font-bold" value={name} onChange={e => setName(e.target.value)} />
                             <input type="password" placeholder="Passwort" className="w-full p-3 border rounded-xl outline-none font-bold" value={pass} onChange={e => setPass(e.target.value)} />
                             {error && <p className="text-red-500 text-xs font-bold bg-red-50 p-2 rounded-lg">{error}</p>}
                             <Button className="w-full py-3" onClick={() => onLogin(name, pass)}>Einloggen</Button>
@@ -277,25 +275,27 @@
 
             const progMap = useMemo(() => {
                 const m = {};
-                userProgress.forEach(p => m[String(p.cardid)] = p);
+                userProgress.forEach(p => {
+                    if (String(p.useruid) === String(userId)) {
+                        m[String(p.cardid)] = p;
+                    }
+                });
                 return m;
-            }, [userProgress]);
+            }, [userProgress, userId]);
 
             const activeCards = cards.filter(c => progMap[String(c.id)]?.active);
-            const studyCards = activeCards.filter(c => (progMap[String(c.id)]?.box || 1) === box);
+            const studyCards = activeCards.filter(c => (Number(progMap[String(c.id)]?.box) || 1) === box);
 
             useEffect(() => {
-                if (idx >= studyCards.length && studyCards.length > 0) {
-                    setIdx(studyCards.length - 1);
-                } else if (studyCards.length === 0) {
-                    setIdx(0);
+                if (idx >= studyCards.length) {
+                    setIdx(studyCards.length > 0 ? studyCards.length - 1 : 0);
                 }
-            }, [studyCards.length, idx]);
+            }, [studyCards.length]);
 
             const handleRate = (ok) => {
                 if (studyCards.length === 0 || !studyCards[idx]) return;
                 const c = studyCards[idx];
-                const curBox = progMap[String(c.id)]?.box || 1;
+                const curBox = Number(progMap[String(c.id)]?.box) || 1;
                 onUpdateBox(c.id, ok ? Math.min(curBox + 1, 4) : 1);
                 setShow(false);
                 if (studyCards.length > 1) {
@@ -331,14 +331,14 @@
                                 {[1,2,3,4].map(b => (
                                     <button key={b} onClick={() => {setBox(b); setIdx(0); setShow(false);}} className={`flex-1 p-3 rounded-xl border-2 transition-all ${box === b ? 'border-blue-600 bg-white shadow-lg' : 'opacity-40 bg-slate-100'}`}>
                                         <div className="text-[10px] font-black uppercase text-slate-400">Box {b}</div>
-                                        <div className="text-xl font-black">{activeCards.filter(c => (progMap[String(c.id)]?.box || 1) === b).length}</div>
+                                        <div className="text-xl font-black">{activeCards.filter(c => (Number(progMap[String(c.id)]?.box) || 1) === b).length}</div>
                                     </button>
                                 ))}
                             </div>
                             {studyCards.length > 0 && studyCards[idx] ? (
                                 <div className="space-y-4">
                                     <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center min-h-[300px] flex flex-col justify-center items-center relative shadow-sm">
-                                        <div className="absolute top-4 left-1/2 -translate-x-1/2 text-[10px] font-black text-slate-300 uppercase tracking-widest">Karte {idx + 1} von {studyCards.length}</div>
+                                        <div className="absolute top-4 left-1/2 -translate-x-1/2 text-[10px] font-black text-slate-300 uppercase tracking-widest text-center w-full">Karte {idx + 1} von {studyCards.length}</div>
                                         <div className="text-xs font-black text-slate-300 uppercase mb-4">Frage</div>
                                         <div className="text-2xl font-bold text-slate-800">{studyCards[idx].q}</div>
                                         {show && <div className="mt-8 pt-8 border-t w-full animate-in">
@@ -374,6 +374,7 @@
                                                 <div className="flex-1">
                                                     <div className="font-bold text-slate-800">{c.q}</div>
                                                     <div className="text-sm text-slate-400 mt-1 italic">{c.a}</div>
+                                                    <p className="text-[9px] uppercase font-black text-slate-300 mt-3">Erstellt von: {c.createdby || "Unbekannt"}</p>
                                                 </div>
                                                 <div className="flex items-center gap-2">
                                                     <button 
