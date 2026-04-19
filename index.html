@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Leitner Sheet - Schnelles Lernen</title>
+    <title>Semester 2 - Schnelles Lernen</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -115,7 +115,6 @@
                 }
             };
 
-            // Hintergrund-API Call ohne die UI zu blockieren
             const apiPostBackground = async (action, payload, optimisticUpdateFn) => {
                 setIsSyncing(true);
                 if (optimisticUpdateFn) optimisticUpdateFn();
@@ -126,7 +125,6 @@
                         mode: 'no-cors', 
                         body: JSON.stringify({ action, username: user?.name, userUid: user?.uid, ...payload })
                     });
-                    // Sync nach Verzögerung
                     setTimeout(() => refreshData(true), 2000);
                 } catch (e) {
                     console.error("BG Sync failed", e);
@@ -143,13 +141,18 @@
                 }
             }, []);
 
+            // Wenn kein User angemeldet ist, wird strikt nur die AuthView gerendert
+            if (!user && view !== 'auth') {
+                setView('auth');
+            }
+
             return (
                 <div className="min-h-screen pb-10">
                     {user && (
                         <nav className="bg-white border-b border-slate-200 sticky top-0 z-50 p-4 shadow-sm flex justify-between items-center h-16">
                             <div className="flex items-center gap-2 cursor-pointer" onClick={() => setView('dashboard')}>
                                 <div className="bg-blue-600 p-1.5 rounded-lg text-white"><Icon name="Layers" size={18}/></div>
-                                <span className="font-black text-lg">LEITNER</span>
+                                <span className="font-black text-lg">SEMESTER 2</span>
                             </div>
                             
                             <div className="flex items-center gap-4">
@@ -176,7 +179,7 @@
                         
                         {view === 'auth' && <AuthView onLogin={handleLogin} error={error} />}
                         
-                        {view === 'dashboard' && (
+                        {user && view === 'dashboard' && (
                             <div className="animate-in space-y-6">
                                 <div className="flex justify-between items-center">
                                     <h1 className="text-3xl font-black">Deine Fächer</h1>
@@ -200,7 +203,7 @@
                             </div>
                         )}
 
-                        {view === 'detail' && currentLecture && (
+                        {user && view === 'detail' && currentLecture && (
                             <LectureDetail 
                                 lecture={currentLecture}
                                 cards={cards.filter(c => String(c.lectureid || c.lectureId) === String(currentLecture.id))}
@@ -265,6 +268,7 @@
             const [show, setShow] = useState(false);
             const [newQ, setNewQ] = useState('');
             const [newA, setNewA] = useState('');
+            const [pendingToggles, setPendingToggles] = useState(new Set());
 
             const progMap = useMemo(() => {
                 const m = {};
@@ -287,8 +291,21 @@
                 if(!newQ || !newA) return;
                 onAddCard(newQ, newA);
                 setNewQ(''); setNewA('');
-                // Fokus zurück auf Frage setzen für schnelles Tippen
                 document.getElementById('question-input').focus();
+            };
+
+            const handleToggleClick = (cardId, currentActive) => {
+                const newActive = !currentActive;
+                setPendingToggles(prev => new Set(prev).add(cardId));
+                onToggleSelect(cardId, newActive);
+                // Entferne nach kurzer Zeit aus dem Pending Status (wenn Sync startet)
+                setTimeout(() => {
+                    setPendingToggles(prev => {
+                        const next = new Set(prev);
+                        next.delete(cardId);
+                        return next;
+                    });
+                }, 1000);
             };
 
             return (
@@ -339,33 +356,45 @@
                                 <h3 className="font-black text-blue-600 flex items-center gap-2"><Icon name="PlusCircle" size={18}/> Neue Karte</h3>
                                 <textarea id="question-input" placeholder="Frage..." className="w-full p-3 border rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all" rows="3" value={newQ} onChange={e => setNewQ(e.target.value)}/>
                                 <textarea placeholder="Antwort..." className="w-full p-3 border rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all" rows="3" value={newA} onChange={e => setNewA(e.target.value)}/>
-                                <Button className="w-full py-3" onClick={handleAdd}>Hinzufügen (Sofort)</Button>
+                                <Button className="w-full py-3" onClick={handleAdd}>Hinzufügen</Button>
                                 <p className="text-[9px] text-slate-400 italic">Karte wird sofort lokal hinzugefügt und im Hintergrund synchronisiert.</p>
                             </div>
                             <div className="md:col-span-2 space-y-3">
-                                {cards.map(c => (
-                                    <div key={c.id} className={`bg-white p-4 rounded-xl border-l-8 transition-all shadow-sm ${progMap[String(c.id)]?.active ? 'border-l-blue-600' : 'border-l-slate-200 opacity-60'}`}>
-                                        <div className="flex justify-between items-start gap-4">
-                                            <div className="flex-1">
-                                                <div className="font-bold text-slate-800">{c.q}</div>
-                                                <div className="text-sm text-slate-400 mt-1 italic">{c.a}</div>
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                                <button 
-                                                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all border ${progMap[String(c.id)]?.active ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-slate-50 text-slate-400 border-slate-200'}`}
-                                                    onClick={() => onToggleSelect(c.id, !progMap[String(c.id)]?.active)}
-                                                >
-                                                    {progMap[String(c.id)]?.active ? 'Aktiv' : 'Wählen'}
-                                                </button>
-                                                {(String(c.creatoruid || c.creatorUid) === String(userId)) && (
-                                                    <button onClick={() => onDeleteCard(c.id)} className="text-slate-300 hover:text-red-500 transition-colors p-1">
-                                                        <Icon name="Trash2" size={18}/>
+                                {cards.map(c => {
+                                    const isPending = pendingToggles.has(c.id);
+                                    const isActive = progMap[String(c.id)]?.active;
+                                    
+                                    return (
+                                        <div key={c.id} className={`bg-white p-4 rounded-xl border-l-8 transition-all shadow-sm ${isActive ? 'border-l-blue-600' : 'border-l-slate-200 opacity-60'}`}>
+                                            <div className="flex justify-between items-start gap-4">
+                                                <div className="flex-1">
+                                                    <div className="font-bold text-slate-800">{c.q}</div>
+                                                    <div className="text-sm text-slate-400 mt-1 italic">{c.a}</div>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <button 
+                                                        disabled={isPending}
+                                                        className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all border ${
+                                                            isPending 
+                                                                ? 'bg-yellow-100 text-yellow-600 border-yellow-200 animate-pulse' 
+                                                                : isActive 
+                                                                    ? 'bg-blue-600 text-white border-blue-600 shadow-sm' 
+                                                                    : 'bg-slate-50 text-slate-400 border-slate-200'
+                                                        }`}
+                                                        onClick={() => handleToggleClick(c.id, isActive)}
+                                                    >
+                                                        {isPending ? 'Wird aktiviert...' : isActive ? 'Aktiv' : 'Wählen'}
                                                     </button>
-                                                )}
+                                                    {(String(c.creatoruid || c.creatorUid) === String(userId)) && (
+                                                        <button onClick={() => onDeleteCard(c.id)} className="text-slate-300 hover:text-red-500 transition-colors p-1">
+                                                            <Icon name="Trash2" size={18}/>
+                                                        </button>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         </div>
                     )}
