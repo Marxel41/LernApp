@@ -29,6 +29,7 @@
             if (Array.isArray(data)) {
                 return data.map(item => normalizeData(item));
             }
+            if (typeof data !== 'object') return data;
             const normalizedItem = {};
             for (let key in data) {
                 normalizedItem[key.toLowerCase()] = data[key];
@@ -85,7 +86,7 @@
                     setProgress(normalizeData(rawData.progress || []));
                     setPendingSyncIds(new Set());
                 } catch (e) {
-                    console.error("Refresh failed", e);
+                    console.error("Refresh fehlgeschlagen", e);
                 } finally {
                     setLoading(false);
                     setIsSyncing(false);
@@ -114,11 +115,11 @@
                         await refreshData();
                         setView('dashboard');
                     } else {
-                        setError(res.error || "Ungültige Login-Daten.");
+                        setError(res.error || "Ungültige Login-Daten. Überprüfe Name und Passwort.");
                     }
                 } catch (e) {
-                    console.error("Login Error:", e);
-                    setError("Verbindung zum Server fehlgeschlagen. Überprüfe die Internetverbindung.");
+                    console.error("Login Fehler:", e);
+                    setError("Verbindung zum Server fehlgeschlagen. Ist die Google Script URL korrekt?");
                 } finally {
                     setLoading(false);
                 }
@@ -142,7 +143,7 @@
                     });
                     setTimeout(() => refreshData(true), 2500);
                 } catch (e) {
-                    console.error("Sync error", e);
+                    console.error("Sync Fehler", e);
                     setIsSyncing(false);
                     setPendingSyncIds(new Set());
                 }
