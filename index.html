@@ -30,7 +30,6 @@
                 const normalizedItem = {};
                 for (let key in item) {
                     normalizedItem[key.toLowerCase()] = item[key];
-                    normalizedItem[key] = item[key];
                 }
                 return normalizedItem;
             });
@@ -83,7 +82,7 @@
                     setLectures(normalize(data.lectures));
                     setCards(normalize(data.cards));
                     setProgress(normalize(data.progress));
-                    // Wenn Daten frisch geladen wurden, leeren wir die Pending-Liste
+                    // Lösche die IDs aus der Pending-Liste erst, wenn die neuen Daten da sind
                     setPendingSyncIds(new Set());
                 } catch (e) {
                     console.error("Refresh failed", e);
@@ -129,19 +128,20 @@
                         mode: 'no-cors', 
                         body: JSON.stringify({ action, username: user?.name, userUid: user?.uid, ...payload })
                     });
-                    // Sync nach Verzögerung um sicherzugehen dass Google Sheets die DB geupdatet hat
+                    // Sync nach Verzögerung
                     setTimeout(() => refreshData(true), 2500);
                 } catch (e) {
                     console.error("BG Sync failed", e);
                     setIsSyncing(false);
-                    setPendingSyncIds(new Set()); // Fallback: Animation stoppen
+                    setPendingSyncIds(new Set());
                 }
             };
 
             useEffect(() => {
                 const saved = localStorage.getItem('leitner_session');
                 if (saved) {
-                    setUser(JSON.parse(saved));
+                    const u = JSON.parse(saved);
+                    setUser(u);
                     setView('dashboard');
                     refreshData();
                 }
@@ -211,8 +211,8 @@
                         {user && view === 'detail' && currentLecture && (
                             <LectureDetail 
                                 lecture={currentLecture}
-                                cards={cards.filter(c => String(c.lectureid || c.lectureId) === String(currentLecture.id))}
-                                userProgress={progress.filter(p => String(p.useruid || p.userUid) === String(user.uid))}
+                                cards={cards.filter(c => String(c.lectureid) === String(currentLecture.id))}
+                                userProgress={progress.filter(p => String(p.useruid) === String(user.uid))}
                                 onBack={() => setView('dashboard')}
                                 onAddCard={(q, a) => {
                                     const tempId = 'c_'+Date.now();
@@ -223,15 +223,15 @@
                                 onToggleSelect={(cardId, active) => {
                                     apiPostBackground('toggleSelection', { cardId, active }, () => {
                                         setProgress(prev => {
-                                            const existing = prev.find(p => String(p.cardid || p.cardId) === String(cardId) && String(p.useruid || p.userUid) === String(user.uid));
-                                            if (existing) return prev.map(p => (String(p.cardid || p.cardId) === String(cardId) && String(p.useruid || p.userUid) === String(user.uid)) ? {...p, active} : p);
+                                            const existing = prev.find(p => String(p.cardid) === String(cardId) && String(p.useruid) === String(user.uid));
+                                            if (existing) return prev.map(p => (String(p.cardid) === String(cardId) && String(p.useruid) === String(user.uid)) ? {...p, active} : p);
                                             return [...prev, { cardid: cardId, active, box: 1, useruid: user.uid }];
                                         });
                                     }, cardId);
                                 }}
                                 onUpdateBox={(cardId, box) => {
                                     apiPostBackground('updateBox', { cardId, box }, () => {
-                                        setProgress(prev => prev.map(p => (String(p.cardid || p.cardId) === String(cardId) && String(p.useruid || p.userUid) === String(user.uid)) ? {...p, box} : p));
+                                        setProgress(prev => prev.map(p => (String(p.cardid) === String(cardId) && String(p.useruid) === String(user.uid)) ? {...p, box} : p));
                                     });
                                 }}
                                 onDeleteCard={(cardId) => {
@@ -277,14 +277,13 @@
 
             const progMap = useMemo(() => {
                 const m = {};
-                userProgress.forEach(p => m[String(p.cardid || p.cardId)] = p);
+                userProgress.forEach(p => m[String(p.cardid)] = p);
                 return m;
             }, [userProgress]);
 
             const activeCards = cards.filter(c => progMap[String(c.id)]?.active);
             const studyCards = activeCards.filter(c => (progMap[String(c.id)]?.box || 1) === box);
 
-            // Verhindert Absturz wenn Kartenanzahl während des Lernens sinkt
             useEffect(() => {
                 if (idx >= studyCards.length && studyCards.length > 0) {
                     setIdx(studyCards.length - 1);
@@ -295,13 +294,10 @@
 
             const handleRate = (ok) => {
                 if (studyCards.length === 0 || !studyCards[idx]) return;
-                
                 const c = studyCards[idx];
                 const curBox = progMap[String(c.id)]?.box || 1;
                 onUpdateBox(c.id, ok ? Math.min(curBox + 1, 4) : 1);
-                
                 setShow(false);
-                // Index erst im nächsten Schritt erhöhen, falls noch Karten da sind
                 if (studyCards.length > 1) {
                     setIdx(prev => (prev < studyCards.length - 1 ? prev + 1 : 0));
                 } else {
@@ -366,7 +362,6 @@
                                 <textarea id="question-input" placeholder="Frage..." className="w-full p-3 border rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all" rows="3" value={newQ} onChange={e => setNewQ(e.target.value)}/>
                                 <textarea placeholder="Antwort..." className="w-full p-3 border rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all" rows="3" value={newA} onChange={e => setNewA(e.target.value)}/>
                                 <Button className="w-full py-3" onClick={handleAdd}>Hinzufügen</Button>
-                                <p className="text-[9px] text-slate-400 italic">Karte wird sofort lokal hinzugefügt und im Hintergrund synchronisiert.</p>
                             </div>
                             <div className="md:col-span-2 space-y-3">
                                 {cards.map(c => {
@@ -394,7 +389,7 @@
                                                     >
                                                         {isPending ? 'Synchronisiere...' : isActive ? 'Aktiv' : 'Wählen'}
                                                     </button>
-                                                    {(String(c.creatoruid || c.creatorUid) === String(userId)) && (
+                                                    {(String(c.creatoruid) === String(userId)) && (
                                                         <button onClick={() => onDeleteCard(c.id)} className="text-slate-300 hover:text-red-500 transition-colors p-1">
                                                             <Icon name="Trash2" size={18}/>
                                                         </button>
