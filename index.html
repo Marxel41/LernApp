@@ -12,8 +12,10 @@
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&display=swap');
         body { font-family: 'Inter', sans-serif; }
-        .animate-in { animation: fadeIn 0.3s ease-out forwards; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-in { animation: fadeIn 0.2s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+        /* Verhindert das Anzeigen von Icon-Namen als Text bevor Lucide lädt */
+        [data-lucide] { display: inline-block; }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
@@ -23,17 +25,34 @@
         const { useState, useEffect, useMemo, useRef } = React;
         const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwsOgO9MCOz1Rmv7m1EVV26nl29H4RS2D4_KqBKCh_HmiZnnbDAu5V1EaxZEwnUzkX9/exec";
 
-        const Icon = ({ name, size = 24, className = "" }) => {
-            const iconRef = useRef(null);
-            useEffect(() => {
-                if (iconRef.current && window.lucide) {
-                    iconRef.current.innerHTML = lucide.createIcons({
-                        icons: { [name]: lucide[name] },
-                        attrs: { width: size, height: size, class: className }
-                    });
+        // Hilfsfunktion zur Normalisierung der Spaltennamen aus Google Sheets
+        const normalize = (data) => {
+            if (!data || !Array.isArray(data)) return [];
+            return data.map(item => {
+                const normalizedItem = {};
+                for (let key in item) {
+                    // Wandelt Keys in lowercase um, um "undefined" durch Case-Mismatches zu vermeiden
+                    normalizedItem[key.toLowerCase()] = item[key];
+                    // Behalte Original-Key für Kompatibilität
+                    normalizedItem[key] = item[key];
                 }
-            }, [name, size, className]);
-            return <span ref={iconRef} className="inline-flex items-center justify-center"></span>;
+                return normalizedItem;
+            });
+        };
+
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const iconRef = useRef(null);
+            
+            useEffect(() => {
+                if (window.lucide && iconRef.current) {
+                    // Konvertiert CamelCase (RefreshCw) zu kebab-case (refresh-cw)
+                    const lucideName = name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+                    iconRef.current.setAttribute('data-lucide', lucideName);
+                    lucide.createIcons();
+                }
+            }, [name]);
+
+            return <i ref={iconRef} style={{ width: size, height: size }} className={`inline-block ${className}`}></i>;
         };
 
         const Card = ({ children, className = "", onClick }) => (
@@ -71,11 +90,10 @@
                 try {
                     const resp = await fetch(SCRIPT_URL);
                     const data = await resp.json();
-                    setLectures(data.lectures || []);
-                    setCards(data.cards || []);
-                    setProgress(data.progress || []);
+                    setLectures(normalize(data.lectures));
+                    setCards(normalize(data.cards));
+                    setProgress(normalize(data.progress));
                 } catch (e) {
-                    console.error("Fetch error:", e);
                     setError("Daten konnten nicht geladen werden.");
                 } finally {
                     setLoading(false);
@@ -101,7 +119,7 @@
                         setError(res.error || "Login fehlgeschlagen.");
                     }
                 } catch (e) {
-                    setError("Verbindung zum Server fehlgeschlagen.");
+                    setError("Login zur Zeit nicht möglich.");
                 } finally {
                     setLoading(false);
                 }
@@ -115,10 +133,10 @@
                         mode: 'no-cors', 
                         body: JSON.stringify({ action, username: user?.name, userUid: user?.uid, ...payload })
                     });
-                    setTimeout(() => refreshData(true), 1000);
+                    // Kurze Verzögerung für Google Sheets Sync
+                    setTimeout(() => refreshData(true), 1200);
                 } catch (e) {
                     setError("Fehler beim Speichern.");
-                } finally {
                     setLoading(false);
                 }
             };
@@ -137,12 +155,14 @@
                     {user && (
                         <nav className="bg-white border-b border-slate-200 sticky top-0 z-50 p-4 shadow-sm flex justify-between items-center">
                             <div className="flex items-center gap-2 cursor-pointer" onClick={() => setView('dashboard')}>
-                                <div className="bg-blue-600 p-1.5 rounded-lg text-white"><Icon name="Layers" size={18}/></div>
-                                <span className="font-black text-lg">LEITNER</span>
+                                <div className="bg-blue-600 p-1.5 rounded-lg text-white">
+                                    <Icon name="Layers" size={18}/>
+                                </div>
+                                <span className="font-black text-lg tracking-tight">LEITNER</span>
                             </div>
                             <div className="flex items-center gap-4">
                                 <span className="text-sm font-bold text-slate-600 hidden sm:inline">{user.name}</span>
-                                <button onClick={() => { setUser(null); localStorage.removeItem('leitner_session'); setView('auth'); }} className="text-slate-400 hover:text-red-500 transition-colors">
+                                <button onClick={() => { setUser(null); localStorage.removeItem('leitner_session'); setView('auth'); }} className="text-slate-400 hover:text-red-500 transition-colors flex items-center">
                                     <Icon name="LogOut" size={20}/>
                                 </button>
                             </div>
@@ -150,7 +170,13 @@
                     )}
 
                     <main className="max-w-5xl mx-auto px-4 mt-6">
-                        {loading && <div className="fixed inset-0 bg-white/50 backdrop-blur-[2px] z-[100] flex items-center justify-center"><Icon name="RefreshCw" className="animate-spin text-blue-600" size={40}/></div>}
+                        {loading && (
+                            <div className="fixed inset-0 bg-white/60 backdrop-blur-[2px] z-[100] flex items-center justify-center">
+                                <div className="bg-white p-4 rounded-full shadow-xl">
+                                    <Icon name="Loader2" className="animate-spin text-blue-600" size={32}/>
+                                </div>
+                            </div>
+                        )}
                         
                         {view === 'auth' && <AuthView onLogin={handleLogin} error={error} />}
                         
@@ -165,12 +191,19 @@
                                 </div>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                                     {lectures.map(l => (
-                                        <Card key={l.id} className="p-6 cursor-pointer hover:border-blue-400 transition-all" onClick={() => { setCurrentLecture(l); setView('detail'); }}>
-                                            <Icon name="BookOpen" className="text-blue-500 mb-2" />
+                                        <Card key={l.id} className="p-6 cursor-pointer hover:border-blue-400 transition-all group" onClick={() => { setCurrentLecture(l); setView('detail'); }}>
+                                            <div className="text-blue-500 mb-2 group-hover:scale-110 transition-transform"><Icon name="BookOpen" /></div>
                                             <h3 className="text-xl font-bold">{l.name || "Unbenannt"}</h3>
-                                            <p className="text-[10px] uppercase text-slate-400 mt-2 font-bold tracking-widest">Erstellt von {l.createdBy || "Unbekannt"}</p>
+                                            <p className="text-[10px] uppercase text-slate-400 mt-2 font-black tracking-widest">
+                                                Erstellt von {l.createdby || l.createdBy || "Unbekannt"}
+                                            </p>
                                         </Card>
                                     ))}
+                                    {lectures.length === 0 && !loading && (
+                                        <div className="col-span-full py-20 text-center text-slate-400 font-medium bg-white rounded-xl border-2 border-dashed">
+                                            Noch keine Fächer vorhanden.
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         )}
@@ -178,8 +211,8 @@
                         {view === 'detail' && currentLecture && (
                             <LectureDetail 
                                 lecture={currentLecture}
-                                cards={cards.filter(c => c.lectureId === currentLecture.id)}
-                                userProgress={progress.filter(p => p.userUid === user.uid)}
+                                cards={cards.filter(c => String(c.lectureid || c.lectureId) === String(currentLecture.id))}
+                                userProgress={progress.filter(p => String(p.useruid || p.userUid) === String(user.uid))}
                                 onBack={() => setView('dashboard')}
                                 onAddCard={(q, a) => apiPost('addCard', { lectureId: currentLecture.id, q, a })}
                                 onToggleSelect={(cardId, active) => apiPost('toggleSelection', { cardId, active })}
@@ -197,13 +230,14 @@
             const [name, setName] = useState('');
             const [pass, setPass] = useState('');
             return (
-                <div className="max-w-sm mx-auto mt-20 animate-in">
+                <div className="max-w-sm mx-auto mt-16 animate-in">
                     <Card className="p-8 shadow-xl border-0">
-                        <h2 className="text-2xl font-black text-center mb-6">Anmelden</h2>
+                        <div className="flex justify-center mb-4 text-blue-600"><Icon name="UserCircle" size={48} /></div>
+                        <h2 className="text-2xl font-black text-center mb-6">Willkommen zurück</h2>
                         <div className="space-y-4">
                             <input type="text" placeholder="Benutzername" className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold" value={name} onChange={e => setName(e.target.value)} />
                             <input type="password" placeholder="Passwort" className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold" value={pass} onChange={e => setPass(e.target.value)} />
-                            {error && <p className="text-red-500 text-xs font-bold">{error}</p>}
+                            {error && <p className="text-red-500 text-xs font-bold bg-red-50 p-2 rounded-lg">{error}</p>}
                             <Button className="w-full py-3" onClick={() => onLogin(name, pass)}>Einloggen</Button>
                         </div>
                     </Card>
@@ -221,7 +255,7 @@
 
             const progMap = useMemo(() => {
                 const m = {};
-                userProgress.forEach(p => m[p.cardId] = p);
+                userProgress.forEach(p => m[p.cardid || p.cardId] = p);
                 return m;
             }, [userProgress]);
 
@@ -239,20 +273,20 @@
             return (
                 <div className="animate-in space-y-6">
                     <div className="flex items-center gap-4">
-                        <button onClick={onBack} className="p-2 bg-white border rounded-lg hover:bg-slate-50"><Icon name="ArrowLeft" size={20}/></button>
+                        <button onClick={onBack} className="p-2 bg-white border rounded-lg hover:bg-slate-50 transition-colors"><Icon name="ArrowLeft" size={20}/></button>
                         <h2 className="text-2xl font-black">{lecture.name}</h2>
                     </div>
                     
-                    <div className="flex bg-slate-200/50 p-1 rounded-xl w-fit">
-                        <button onClick={() => setTab('study')} className={`px-4 py-1.5 rounded-lg font-bold text-sm ${tab === 'study' ? 'bg-white shadow text-blue-600' : 'text-slate-500'}`}>Lernen</button>
-                        <button onClick={() => setTab('pool')} className={`px-4 py-1.5 rounded-lg font-bold text-sm ${tab === 'pool' ? 'bg-white shadow text-blue-600' : 'text-slate-500'}`}>Karten-Pool</button>
+                    <div className="flex bg-slate-200/60 p-1 rounded-xl w-fit">
+                        <button onClick={() => setTab('study')} className={`px-5 py-2 rounded-lg font-bold text-sm transition-all ${tab === 'study' ? 'bg-white shadow text-blue-600' : 'text-slate-500'}`}>Lernen</button>
+                        <button onClick={() => setTab('pool')} className={`px-5 py-2 rounded-lg font-bold text-sm transition-all ${tab === 'pool' ? 'bg-white shadow text-blue-600' : 'text-slate-500'}`}>Karten-Pool</button>
                     </div>
 
                     {tab === 'study' ? (
                         <div className="max-w-xl mx-auto space-y-6">
                             <div className="flex gap-2">
                                 {[1,2,3,4].map(b => (
-                                    <button key={b} onClick={() => {setBox(b); setIdx(0); setShow(false);}} className={`flex-1 p-3 rounded-xl border-2 transition-all ${box === b ? 'border-blue-600 bg-white shadow-lg' : 'opacity-40 grayscale'}`}>
+                                    <button key={b} onClick={() => {setBox(b); setIdx(0); setShow(false);}} className={`flex-1 p-3 rounded-xl border-2 transition-all ${box === b ? 'border-blue-600 bg-white shadow-lg' : 'opacity-40 grayscale bg-slate-100'}`}>
                                         <div className="text-[10px] font-black uppercase text-slate-400">Box {b}</div>
                                         <div className="text-xl font-black">{activeCards.filter(c => (progMap[c.id]?.box || 1) === b).length}</div>
                                     </button>
@@ -260,44 +294,54 @@
                             </div>
                             {studyCards.length > 0 ? (
                                 <div className="space-y-4">
-                                    <Card className="p-10 text-center min-h-[250px] flex flex-col justify-center items-center">
+                                    <Card className="p-10 text-center min-h-[300px] flex flex-col justify-center items-center relative">
+                                        <div className="absolute top-4 left-1/2 -translate-x-1/2 text-[10px] font-black text-slate-300 uppercase tracking-widest">Karte {idx + 1} von {studyCards.length}</div>
                                         <div className="text-xs font-black text-slate-300 uppercase mb-4">Frage</div>
-                                        <div className="text-xl font-bold">{studyCards[idx].q}</div>
-                                        {show && <div className="mt-6 pt-6 border-t w-full animate-in">
+                                        <div className="text-2xl font-bold text-slate-800">{studyCards[idx].q}</div>
+                                        {show && <div className="mt-8 pt-8 border-t w-full animate-in">
                                             <div className="text-xs font-black text-blue-300 uppercase mb-2">Antwort</div>
-                                            <div className="text-xl font-black text-blue-600">{studyCards[idx].a}</div>
+                                            <div className="text-2xl font-black text-blue-600">{studyCards[idx].a}</div>
                                         </div>}
                                     </Card>
-                                    {!show ? <Button className="w-full py-4 text-lg" onClick={() => setShow(true)}>Antwort zeigen</Button> : (
+                                    {!show ? <Button className="w-full py-5 text-xl" onClick={() => setShow(true)}>Antwort zeigen</Button> : (
                                         <div className="flex gap-4">
-                                            <button onClick={() => handleRate(false)} className="flex-1 bg-red-50 text-red-600 py-4 rounded-xl font-black border border-red-100">Falsch</button>
-                                            <button onClick={() => handleRate(true)} className="flex-1 bg-green-500 text-white py-4 rounded-xl font-black shadow-lg">Richtig</button>
+                                            <button onClick={() => handleRate(false)} className="flex-1 bg-red-50 text-red-600 py-4 rounded-xl font-black border-2 border-red-100 hover:bg-red-100 transition-colors">Falsch</button>
+                                            <button onClick={() => handleRate(true)} className="flex-1 bg-green-500 text-white py-4 rounded-xl font-black shadow-lg hover:bg-green-600 transition-colors">Richtig</button>
                                         </div>
                                     )}
                                 </div>
-                            ) : <div className="text-center py-20 text-slate-400 font-bold border-2 border-dashed rounded-3xl">Diese Box ist leer.</div>}
+                            ) : <div className="text-center py-24 text-slate-400 font-bold border-2 border-dashed rounded-[2rem] bg-white">Diese Box ist aktuell leer.</div>}
                         </div>
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                            <Card className="p-6 h-fit space-y-4">
-                                <h3 className="font-black text-blue-600">Neue Karte</h3>
-                                <textarea placeholder="Frage..." className="w-full p-3 border rounded-xl text-sm" rows="3" value={newQ} onChange={e => setNewQ(e.target.value)}/>
-                                <textarea placeholder="Antwort..." className="w-full p-3 border rounded-xl text-sm" rows="3" value={newA} onChange={e => setNewA(e.target.value)}/>
-                                <Button className="w-full" onClick={() => { onAddCard(newQ, newA); setNewQ(''); setNewA(''); }}>Speichern</Button>
+                            <Card className="p-6 h-fit space-y-4 shadow-lg border-blue-50">
+                                <h3 className="font-black text-blue-600 flex items-center gap-2"><Icon name="PlusCircle" size={18}/> Neue Karte</h3>
+                                <textarea placeholder="Frage..." className="w-full p-3 border rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all" rows="3" value={newQ} onChange={e => setNewQ(e.target.value)}/>
+                                <textarea placeholder="Antwort..." className="w-full p-3 border rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all" rows="3" value={newA} onChange={e => setNewA(e.target.value)}/>
+                                <Button className="w-full py-3" onClick={() => { onAddCard(newQ, newA); setNewQ(''); setNewA(''); }}>Speichern</Button>
                             </Card>
                             <div className="md:col-span-2 space-y-3">
                                 {cards.map(c => (
-                                    <Card key={c.id} className={`p-4 border-l-4 ${progMap[c.id]?.active ? 'border-l-blue-600' : 'border-l-slate-200'}`}>
+                                    <Card key={c.id} className={`p-4 border-l-8 transition-all ${progMap[c.id]?.active ? 'border-l-blue-600' : 'border-l-slate-200 opacity-60'}`}>
                                         <div className="flex justify-between items-start gap-4">
-                                            <div>
-                                                <div className="font-bold">{c.q}</div>
-                                                <div className="text-sm text-slate-400 mt-1">{c.a}</div>
+                                            <div className="flex-1">
+                                                <div className="font-bold text-slate-800">{c.q}</div>
+                                                <div className="text-sm text-slate-400 mt-1 italic">{c.a}</div>
+                                                <p className="text-[9px] uppercase font-black text-slate-300 mt-3">Erstellt von: {c.createdby || c.createdBy || "Unbekannt"}</p>
                                             </div>
                                             <div className="flex items-center gap-2">
-                                                <Button variant={progMap[c.id]?.active ? 'primary' : 'secondary'} className="text-[10px] px-2 py-1" onClick={() => onToggleSelect(c.id, !progMap[c.id]?.active)}>
-                                                    {progMap[c.id]?.active ? 'Aktiv' : 'Wählen'}
+                                                <Button 
+                                                    variant={progMap[c.id]?.active ? 'primary' : 'secondary'} 
+                                                    className="text-[10px] px-3 py-1.5 uppercase tracking-tighter" 
+                                                    onClick={() => onToggleSelect(c.id, !progMap[c.id]?.active)}
+                                                >
+                                                    {progMap[c.id]?.active ? 'Im System' : 'Wählen'}
                                                 </Button>
-                                                {c.creatorUid === userId && <button onClick={() => onDeleteCard(c.id)} className="text-slate-300 hover:text-red-500"><Icon name="Trash2" size={16}/></button>}
+                                                {(String(c.creatoruid || c.creatorUid) === String(userId)) && (
+                                                    <button onClick={() => onDeleteCard(c.id)} className="text-slate-300 hover:text-red-500 transition-colors p-1">
+                                                        <Icon name="Trash2" size={18}/>
+                                                    </button>
+                                                )}
                                             </div>
                                         </div>
                                     </Card>
