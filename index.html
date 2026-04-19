@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Leitner Sheet - Login & Learn</title>
+    <title>Leitner Sheet - Schnelles Lernen</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -14,8 +14,7 @@
         body { font-family: 'Inter', sans-serif; }
         .animate-in { animation: fadeIn 0.2s ease-out forwards; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-        /* Verhindert das Anzeigen von Icon-Namen als Text bevor Lucide lädt */
-        [data-lucide] { display: inline-block; }
+        [data-lucide] { display: inline-block; vertical-align: middle; }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
@@ -25,15 +24,12 @@
         const { useState, useEffect, useMemo, useRef } = React;
         const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwsOgO9MCOz1Rmv7m1EVV26nl29H4RS2D4_KqBKCh_HmiZnnbDAu5V1EaxZEwnUzkX9/exec";
 
-        // Hilfsfunktion zur Normalisierung der Spaltennamen aus Google Sheets
         const normalize = (data) => {
             if (!data || !Array.isArray(data)) return [];
             return data.map(item => {
                 const normalizedItem = {};
                 for (let key in item) {
-                    // Wandelt Keys in lowercase um, um "undefined" durch Case-Mismatches zu vermeiden
                     normalizedItem[key.toLowerCase()] = item[key];
-                    // Behalte Original-Key für Kompatibilität
                     normalizedItem[key] = item[key];
                 }
                 return normalizedItem;
@@ -42,32 +38,24 @@
 
         const Icon = ({ name, size = 20, className = "" }) => {
             const iconRef = useRef(null);
-            
             useEffect(() => {
                 if (window.lucide && iconRef.current) {
-                    // Konvertiert CamelCase (RefreshCw) zu kebab-case (refresh-cw)
                     const lucideName = name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
                     iconRef.current.setAttribute('data-lucide', lucideName);
                     lucide.createIcons();
                 }
-            }, [name]);
-
+            }, [name, size]);
             return <i ref={iconRef} style={{ width: size, height: size }} className={`inline-block ${className}`}></i>;
         };
 
-        const Card = ({ children, className = "", onClick }) => (
-            <div onClick={onClick} className={`bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden ${className}`}>{children}</div>
-        );
-
-        const Button = ({ onClick, children, variant = 'primary', className = "", disabled = false, type = "button" }) => {
+        const Button = ({ onClick, children, variant = 'primary', className = "", disabled = false }) => {
             const variants = {
                 primary: 'bg-blue-600 text-white hover:bg-blue-700 shadow-md',
                 secondary: 'bg-slate-200 text-slate-800 hover:bg-slate-300',
                 danger: 'bg-red-100 text-red-600 hover:bg-red-200',
-                ghost: 'text-slate-500 hover:bg-slate-100'
             };
             return (
-                <button type={type} disabled={disabled} onClick={onClick} 
+                <button disabled={disabled} onClick={onClick} 
                     className={`px-4 py-2 rounded-lg font-bold transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 ${variants[variant]} ${className}`}>
                     {children}
                 </button>
@@ -82,11 +70,12 @@
             const [progress, setProgress] = useState([]);
             const [currentLecture, setCurrentLecture] = useState(null);
             const [loading, setLoading] = useState(false);
+            const [isSyncing, setIsSyncing] = useState(false);
             const [error, setError] = useState('');
 
             const refreshData = async (silent = false) => {
                 if (!SCRIPT_URL) return;
-                if (!silent) setLoading(true);
+                if (!silent) setLoading(true); else setIsSyncing(true);
                 try {
                     const resp = await fetch(SCRIPT_URL);
                     const data = await resp.json();
@@ -94,9 +83,10 @@
                     setCards(normalize(data.cards));
                     setProgress(normalize(data.progress));
                 } catch (e) {
-                    setError("Daten konnten nicht geladen werden.");
+                    console.error("Refresh failed", e);
                 } finally {
                     setLoading(false);
+                    setIsSyncing(false);
                 }
             };
 
@@ -119,25 +109,28 @@
                         setError(res.error || "Login fehlgeschlagen.");
                     }
                 } catch (e) {
-                    setError("Login zur Zeit nicht möglich.");
+                    setError("Server antwortet nicht.");
                 } finally {
                     setLoading(false);
                 }
             };
 
-            const apiPost = async (action, payload) => {
-                setLoading(true);
+            // Hintergrund-API Call ohne die UI zu blockieren
+            const apiPostBackground = async (action, payload, optimisticUpdateFn) => {
+                setIsSyncing(true);
+                if (optimisticUpdateFn) optimisticUpdateFn();
+                
                 try {
                     await fetch(SCRIPT_URL, {
                         method: 'POST',
                         mode: 'no-cors', 
                         body: JSON.stringify({ action, username: user?.name, userUid: user?.uid, ...payload })
                     });
-                    // Kurze Verzögerung für Google Sheets Sync
-                    setTimeout(() => refreshData(true), 1200);
+                    // Sync nach Verzögerung
+                    setTimeout(() => refreshData(true), 2000);
                 } catch (e) {
-                    setError("Fehler beim Speichern.");
-                    setLoading(false);
+                    console.error("BG Sync failed", e);
+                    setIsSyncing(false);
                 }
             };
 
@@ -153,16 +146,21 @@
             return (
                 <div className="min-h-screen pb-10">
                     {user && (
-                        <nav className="bg-white border-b border-slate-200 sticky top-0 z-50 p-4 shadow-sm flex justify-between items-center">
+                        <nav className="bg-white border-b border-slate-200 sticky top-0 z-50 p-4 shadow-sm flex justify-between items-center h-16">
                             <div className="flex items-center gap-2 cursor-pointer" onClick={() => setView('dashboard')}>
-                                <div className="bg-blue-600 p-1.5 rounded-lg text-white">
-                                    <Icon name="Layers" size={18}/>
-                                </div>
-                                <span className="font-black text-lg tracking-tight">LEITNER</span>
+                                <div className="bg-blue-600 p-1.5 rounded-lg text-white"><Icon name="Layers" size={18}/></div>
+                                <span className="font-black text-lg">LEITNER</span>
                             </div>
+                            
                             <div className="flex items-center gap-4">
+                                {isSyncing && (
+                                    <div className="flex items-center gap-2 text-blue-500 text-[10px] font-black uppercase animate-pulse">
+                                        <Icon name="RefreshCw" size={12} className="animate-spin" />
+                                        <span>Sync...</span>
+                                    </div>
+                                )}
                                 <span className="text-sm font-bold text-slate-600 hidden sm:inline">{user.name}</span>
-                                <button onClick={() => { setUser(null); localStorage.removeItem('leitner_session'); setView('auth'); }} className="text-slate-400 hover:text-red-500 transition-colors flex items-center">
+                                <button onClick={() => { setUser(null); localStorage.removeItem('leitner_session'); setView('auth'); }} className="text-slate-400 hover:text-red-500 transition-colors">
                                     <Icon name="LogOut" size={20}/>
                                 </button>
                             </div>
@@ -171,10 +169,8 @@
 
                     <main className="max-w-5xl mx-auto px-4 mt-6">
                         {loading && (
-                            <div className="fixed inset-0 bg-white/60 backdrop-blur-[2px] z-[100] flex items-center justify-center">
-                                <div className="bg-white p-4 rounded-full shadow-xl">
-                                    <Icon name="Loader2" className="animate-spin text-blue-600" size={32}/>
-                                </div>
+                            <div className="fixed inset-0 bg-white/80 z-[100] flex items-center justify-center">
+                                <Icon name="Loader2" className="animate-spin text-blue-600" size={40}/>
                             </div>
                         )}
                         
@@ -186,24 +182,20 @@
                                     <h1 className="text-3xl font-black">Deine Fächer</h1>
                                     <Button onClick={() => { 
                                         const n = prompt("Name des Fachs:"); 
-                                        if(n) apiPost('addLecture', {name: n});
+                                        if(n) apiPostBackground('addLecture', {name: n}, () => {
+                                            const newL = { id: 'temp_'+Date.now(), name: n, createdby: user.name };
+                                            setLectures(prev => [...prev, newL]);
+                                        });
                                     }}><Icon name="Plus" size={18}/> Neu</Button>
                                 </div>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                                     {lectures.map(l => (
-                                        <Card key={l.id} className="p-6 cursor-pointer hover:border-blue-400 transition-all group" onClick={() => { setCurrentLecture(l); setView('detail'); }}>
+                                        <div key={l.id} className="bg-white p-6 rounded-xl border border-slate-200 cursor-pointer hover:border-blue-400 transition-all shadow-sm group" onClick={() => { setCurrentLecture(l); setView('detail'); }}>
                                             <div className="text-blue-500 mb-2 group-hover:scale-110 transition-transform"><Icon name="BookOpen" /></div>
                                             <h3 className="text-xl font-bold">{l.name || "Unbenannt"}</h3>
-                                            <p className="text-[10px] uppercase text-slate-400 mt-2 font-black tracking-widest">
-                                                Erstellt von {l.createdby || l.createdBy || "Unbekannt"}
-                                            </p>
-                                        </Card>
-                                    ))}
-                                    {lectures.length === 0 && !loading && (
-                                        <div className="col-span-full py-20 text-center text-slate-400 font-medium bg-white rounded-xl border-2 border-dashed">
-                                            Noch keine Fächer vorhanden.
+                                            <p className="text-[10px] uppercase text-slate-400 mt-2 font-black tracking-widest">Erstellt von {l.createdby || "Unbekannt"}</p>
                                         </div>
-                                    )}
+                                    ))}
                                 </div>
                             </div>
                         )}
@@ -214,10 +206,31 @@
                                 cards={cards.filter(c => String(c.lectureid || c.lectureId) === String(currentLecture.id))}
                                 userProgress={progress.filter(p => String(p.useruid || p.userUid) === String(user.uid))}
                                 onBack={() => setView('dashboard')}
-                                onAddCard={(q, a) => apiPost('addCard', { lectureId: currentLecture.id, q, a })}
-                                onToggleSelect={(cardId, active) => apiPost('toggleSelection', { cardId, active })}
-                                onUpdateBox={(cardId, box) => apiPost('updateBox', { cardId, box })}
-                                onDeleteCard={(cardId) => apiPost('deleteCard', { cardId })}
+                                onAddCard={(q, a) => {
+                                    const tempId = 'c_'+Date.now();
+                                    apiPostBackground('addCard', { lectureId: currentLecture.id, q, a }, () => {
+                                        setCards(prev => [...prev, { id: tempId, lectureid: currentLecture.id, q, a, createdby: user.name, creatoruid: user.uid }]);
+                                    });
+                                }}
+                                onToggleSelect={(cardId, active) => {
+                                    apiPostBackground('toggleSelection', { cardId, active }, () => {
+                                        setProgress(prev => {
+                                            const existing = prev.find(p => String(p.cardid || p.cardId) === String(cardId));
+                                            if (existing) return prev.map(p => String(p.cardid || p.cardId) === String(cardId) ? {...p, active} : p);
+                                            return [...prev, { cardid: cardId, active, box: 1, useruid: user.uid }];
+                                        });
+                                    });
+                                }}
+                                onUpdateBox={(cardId, box) => {
+                                    apiPostBackground('updateBox', { cardId, box }, () => {
+                                        setProgress(prev => prev.map(p => String(p.cardid || p.cardId) === String(cardId) ? {...p, box} : p));
+                                    });
+                                }}
+                                onDeleteCard={(cardId) => {
+                                    apiPostBackground('deleteCard', { cardId }, () => {
+                                        setCards(prev => prev.filter(c => String(c.id) !== String(cardId)));
+                                    });
+                                }}
                                 userId={user.uid}
                             />
                         )}
@@ -231,16 +244,16 @@
             const [pass, setPass] = useState('');
             return (
                 <div className="max-w-sm mx-auto mt-16 animate-in">
-                    <Card className="p-8 shadow-xl border-0">
+                    <div className="bg-white p-8 rounded-xl shadow-xl border border-slate-100">
                         <div className="flex justify-center mb-4 text-blue-600"><Icon name="UserCircle" size={48} /></div>
-                        <h2 className="text-2xl font-black text-center mb-6">Willkommen zurück</h2>
+                        <h2 className="text-2xl font-black text-center mb-6">Login</h2>
                         <div className="space-y-4">
-                            <input type="text" placeholder="Benutzername" className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold" value={name} onChange={e => setName(e.target.value)} />
-                            <input type="password" placeholder="Passwort" className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold" value={pass} onChange={e => setPass(e.target.value)} />
+                            <input type="text" placeholder="Name" className="w-full p-3 border rounded-xl outline-none font-bold" value={name} onChange={e => setName(e.target.value)} />
+                            <input type="password" placeholder="Passwort" className="w-full p-3 border rounded-xl outline-none font-bold" value={pass} onChange={e => setPass(e.target.value)} />
                             {error && <p className="text-red-500 text-xs font-bold bg-red-50 p-2 rounded-lg">{error}</p>}
                             <Button className="w-full py-3" onClick={() => onLogin(name, pass)}>Einloggen</Button>
                         </div>
-                    </Card>
+                    </div>
                 </div>
             );
         }
@@ -255,19 +268,27 @@
 
             const progMap = useMemo(() => {
                 const m = {};
-                userProgress.forEach(p => m[p.cardid || p.cardId] = p);
+                userProgress.forEach(p => m[String(p.cardid || p.cardId)] = p);
                 return m;
             }, [userProgress]);
 
-            const activeCards = cards.filter(c => progMap[c.id]?.active);
-            const studyCards = activeCards.filter(c => (progMap[c.id]?.box || 1) === box);
+            const activeCards = cards.filter(c => progMap[String(c.id)]?.active);
+            const studyCards = activeCards.filter(c => (progMap[String(c.id)]?.box || 1) === box);
 
             const handleRate = (ok) => {
                 const c = studyCards[idx];
-                const curBox = progMap[c.id]?.box || 1;
+                const curBox = progMap[String(c.id)]?.box || 1;
                 onUpdateBox(c.id, ok ? Math.min(curBox + 1, 4) : 1);
                 setShow(false);
                 if (idx < studyCards.length - 1) setIdx(idx + 1); else setIdx(0);
+            };
+
+            const handleAdd = () => {
+                if(!newQ || !newA) return;
+                onAddCard(newQ, newA);
+                setNewQ(''); setNewA('');
+                // Fokus zurück auf Frage setzen für schnelles Tippen
+                document.getElementById('question-input').focus();
             };
 
             return (
@@ -286,15 +307,15 @@
                         <div className="max-w-xl mx-auto space-y-6">
                             <div className="flex gap-2">
                                 {[1,2,3,4].map(b => (
-                                    <button key={b} onClick={() => {setBox(b); setIdx(0); setShow(false);}} className={`flex-1 p-3 rounded-xl border-2 transition-all ${box === b ? 'border-blue-600 bg-white shadow-lg' : 'opacity-40 grayscale bg-slate-100'}`}>
+                                    <button key={b} onClick={() => {setBox(b); setIdx(0); setShow(false);}} className={`flex-1 p-3 rounded-xl border-2 transition-all ${box === b ? 'border-blue-600 bg-white shadow-lg' : 'opacity-40 bg-slate-100'}`}>
                                         <div className="text-[10px] font-black uppercase text-slate-400">Box {b}</div>
-                                        <div className="text-xl font-black">{activeCards.filter(c => (progMap[c.id]?.box || 1) === b).length}</div>
+                                        <div className="text-xl font-black">{activeCards.filter(c => (progMap[String(c.id)]?.box || 1) === b).length}</div>
                                     </button>
                                 ))}
                             </div>
                             {studyCards.length > 0 ? (
                                 <div className="space-y-4">
-                                    <Card className="p-10 text-center min-h-[300px] flex flex-col justify-center items-center relative">
+                                    <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center min-h-[300px] flex flex-col justify-center items-center relative shadow-sm">
                                         <div className="absolute top-4 left-1/2 -translate-x-1/2 text-[10px] font-black text-slate-300 uppercase tracking-widest">Karte {idx + 1} von {studyCards.length}</div>
                                         <div className="text-xs font-black text-slate-300 uppercase mb-4">Frage</div>
                                         <div className="text-2xl font-bold text-slate-800">{studyCards[idx].q}</div>
@@ -302,7 +323,7 @@
                                             <div className="text-xs font-black text-blue-300 uppercase mb-2">Antwort</div>
                                             <div className="text-2xl font-black text-blue-600">{studyCards[idx].a}</div>
                                         </div>}
-                                    </Card>
+                                    </div>
                                     {!show ? <Button className="w-full py-5 text-xl" onClick={() => setShow(true)}>Antwort zeigen</Button> : (
                                         <div className="flex gap-4">
                                             <button onClick={() => handleRate(false)} className="flex-1 bg-red-50 text-red-600 py-4 rounded-xl font-black border-2 border-red-100 hover:bg-red-100 transition-colors">Falsch</button>
@@ -310,33 +331,32 @@
                                         </div>
                                     )}
                                 </div>
-                            ) : <div className="text-center py-24 text-slate-400 font-bold border-2 border-dashed rounded-[2rem] bg-white">Diese Box ist aktuell leer.</div>}
+                            ) : <div className="text-center py-24 text-slate-400 font-bold border-2 border-dashed rounded-[2rem] bg-white">Box {box} ist leer.</div>}
                         </div>
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                            <Card className="p-6 h-fit space-y-4 shadow-lg border-blue-50">
+                            <div className="bg-white p-6 rounded-xl border border-slate-200 h-fit space-y-4 shadow-sm">
                                 <h3 className="font-black text-blue-600 flex items-center gap-2"><Icon name="PlusCircle" size={18}/> Neue Karte</h3>
-                                <textarea placeholder="Frage..." className="w-full p-3 border rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all" rows="3" value={newQ} onChange={e => setNewQ(e.target.value)}/>
+                                <textarea id="question-input" placeholder="Frage..." className="w-full p-3 border rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all" rows="3" value={newQ} onChange={e => setNewQ(e.target.value)}/>
                                 <textarea placeholder="Antwort..." className="w-full p-3 border rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all" rows="3" value={newA} onChange={e => setNewA(e.target.value)}/>
-                                <Button className="w-full py-3" onClick={() => { onAddCard(newQ, newA); setNewQ(''); setNewA(''); }}>Speichern</Button>
-                            </Card>
+                                <Button className="w-full py-3" onClick={handleAdd}>Hinzufügen (Sofort)</Button>
+                                <p className="text-[9px] text-slate-400 italic">Karte wird sofort lokal hinzugefügt und im Hintergrund synchronisiert.</p>
+                            </div>
                             <div className="md:col-span-2 space-y-3">
                                 {cards.map(c => (
-                                    <Card key={c.id} className={`p-4 border-l-8 transition-all ${progMap[c.id]?.active ? 'border-l-blue-600' : 'border-l-slate-200 opacity-60'}`}>
+                                    <div key={c.id} className={`bg-white p-4 rounded-xl border-l-8 transition-all shadow-sm ${progMap[String(c.id)]?.active ? 'border-l-blue-600' : 'border-l-slate-200 opacity-60'}`}>
                                         <div className="flex justify-between items-start gap-4">
                                             <div className="flex-1">
                                                 <div className="font-bold text-slate-800">{c.q}</div>
                                                 <div className="text-sm text-slate-400 mt-1 italic">{c.a}</div>
-                                                <p className="text-[9px] uppercase font-black text-slate-300 mt-3">Erstellt von: {c.createdby || c.createdBy || "Unbekannt"}</p>
                                             </div>
                                             <div className="flex items-center gap-2">
-                                                <Button 
-                                                    variant={progMap[c.id]?.active ? 'primary' : 'secondary'} 
-                                                    className="text-[10px] px-3 py-1.5 uppercase tracking-tighter" 
-                                                    onClick={() => onToggleSelect(c.id, !progMap[c.id]?.active)}
+                                                <button 
+                                                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all border ${progMap[String(c.id)]?.active ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-slate-50 text-slate-400 border-slate-200'}`}
+                                                    onClick={() => onToggleSelect(c.id, !progMap[String(c.id)]?.active)}
                                                 >
-                                                    {progMap[c.id]?.active ? 'Im System' : 'Wählen'}
-                                                </Button>
+                                                    {progMap[String(c.id)]?.active ? 'Aktiv' : 'Wählen'}
+                                                </button>
                                                 {(String(c.creatoruid || c.creatorUid) === String(userId)) && (
                                                     <button onClick={() => onDeleteCard(c.id)} className="text-slate-300 hover:text-red-500 transition-colors p-1">
                                                         <Icon name="Trash2" size={18}/>
@@ -344,7 +364,7 @@
                                                 )}
                                             </div>
                                         </div>
-                                    </Card>
+                                    </div>
                                 ))}
                             </div>
                         </div>
