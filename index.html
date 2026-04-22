@@ -15,6 +15,12 @@
         .animate-in { animation: fadeIn 0.2s ease-out forwards; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
         [data-lucide] { display: inline-block; vertical-align: middle; }
+        
+        /* Box-Farben für das Leitner-System */
+        .box-1-ui { border-color: #ef4444; background-color: #fef2f2; }
+        .box-2-ui { border-color: #f97316; background-color: #fff7ed; }
+        .box-3-ui { border-color: #eab308; background-color: #fefce8; }
+        .box-4-ui { border-color: #22c55e; background-color: #f0fdf4; }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
@@ -24,10 +30,8 @@
         const { useState, useEffect, useMemo, useRef } = React;
         const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwsOgO9MCOz1Rmv7m1EVV26nl29H4RS2D4_KqBKCh_HmiZnnbDAu5V1EaxZEwnUzkX9/exec";
 
-        // Hilfsfunktion zur Normalisierung von Tabellendaten
         const normalizeData = (data) => {
-            if (!data) return [];
-            if (!Array.isArray(data)) return [];
+            if (!data || !Array.isArray(data)) return [];
             return data.map(item => {
                 const normalized = {};
                 for (let key in item) {
@@ -42,21 +46,24 @@
             useEffect(() => {
                 if (window.lucide && iconRef.current) {
                     const lucideName = name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
-                    iconRef.current.setAttribute('data-lucide', lucideName);
-                    lucide.createIcons();
+                    iconRef.current.innerHTML = `<i data-lucide="${lucideName}"></i>`;
+                    lucide.createIcons({
+                        attrs: { width: size, height: size, class: className }
+                    });
                 }
-            }, [name, size]);
-            return <i ref={iconRef} style={{ width: size, height: size }} className={`inline-block ${className}`}></i>;
+            }, [name, size, className]);
+            return <span ref={iconRef} className="flex items-center justify-center"></span>;
         };
 
-        const Button = ({ onClick, children, variant = 'primary', className = "", disabled = false }) => {
+        const Button = ({ onClick, children, variant = 'primary', className = "", disabled = false, title = "" }) => {
             const variants = {
                 primary: 'bg-blue-600 text-white hover:bg-blue-700 shadow-md',
                 secondary: 'bg-slate-200 text-slate-800 hover:bg-slate-300',
                 danger: 'bg-red-100 text-red-600 hover:bg-red-200',
+                outline: 'border-2 border-slate-200 hover:border-blue-400 text-slate-600 hover:text-blue-600 bg-white'
             };
             return (
-                <button disabled={disabled} onClick={onClick} 
+                <button title={title} disabled={disabled} onClick={onClick} 
                     className={`px-4 py-2 rounded-lg font-bold transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 ${variants[variant]} ${className}`}>
                     {children}
                 </button>
@@ -77,7 +84,8 @@
 
             const refreshData = async (silent = false) => {
                 if (!SCRIPT_URL) return;
-                if (!silent) setLoading(true); else setIsSyncing(true);
+                if (!silent) setLoading(true);
+                setIsSyncing(true);
                 try {
                     const resp = await fetch(SCRIPT_URL);
                     const rawData = await resp.json();
@@ -101,23 +109,18 @@
                         method: 'POST',
                         body: JSON.stringify({ action: 'login', username, password })
                     });
-                    
                     const res = await resp.json();
-                    // Direkte Prüfung ohne Normalisierung für maximale Zuverlässigkeit beim Login
                     const isSuccess = res.success || res.Success;
                     const uid = res.uid || res.Uid || res.userUid || res.useruid;
 
                     if (isSuccess && uid) {
-                        const userData = { 
-                            name: res.username || res.Username || username, 
-                            uid: String(uid) 
-                        };
+                        const userData = { name: res.username || username, uid: String(uid) };
                         setUser(userData);
                         localStorage.setItem('leitner_session', JSON.stringify(userData));
                         await refreshData();
                         setView('dashboard');
                     } else {
-                        setError(res.error || "Login fehlgeschlagen. Name oder Passwort falsch.");
+                        setError(res.error || "Login fehlgeschlagen.");
                     }
                 } catch (e) {
                     setError("Verbindung zum Server nicht möglich.");
@@ -131,6 +134,11 @@
                 if (targetId) setPendingSyncIds(prev => new Set(prev).add(String(targetId)));
                 if (optimisticUpdateFn) optimisticUpdateFn();
                 
+                const cleanPayload = { ...payload };
+                // Verhindere temp_ IDs in der Datenbank
+                if (cleanPayload.id && String(cleanPayload.id).startsWith('temp_')) delete cleanPayload.id;
+                if (cleanPayload.cardId && String(cleanPayload.cardId).startsWith('temp_')) return;
+
                 try {
                     await fetch(SCRIPT_URL, {
                         method: 'POST',
@@ -139,9 +147,10 @@
                             action, 
                             username: user?.name, 
                             userUid: user?.uid, 
-                            ...payload 
+                            ...cleanPayload 
                         })
                     });
+                    // Refresh erst nach kleiner Verzögerung damit Google Sheets die Zeile sicher hat
                     setTimeout(() => refreshData(true), 2500);
                 } catch (e) {
                     setIsSyncing(false);
@@ -176,15 +185,18 @@
                                 <span className="font-black text-lg uppercase tracking-tighter">SEMESTER 2</span>
                             </div>
                             
-                            <div className="flex items-center gap-4">
-                                {isSyncing && (
-                                    <div className="flex items-center gap-2 text-blue-500 text-[10px] font-black uppercase animate-pulse">
-                                        <Icon name="RefreshCw" size={12} className="animate-spin" />
-                                        <span>Sync...</span>
-                                    </div>
-                                )}
-                                <span className="text-sm font-bold text-slate-600 hidden sm:inline text-right">Hallo {user.name}</span>
-                                <button onClick={() => { setUser(null); localStorage.removeItem('leitner_session'); setView('auth'); }} className="text-slate-400 hover:text-red-500 transition-colors">
+                            <div className="flex items-center gap-2 sm:gap-4">
+                                <button 
+                                    onClick={() => refreshData(true)} 
+                                    className={`p-2 rounded-lg transition-all ${isSyncing ? 'text-blue-600 bg-blue-50' : 'text-slate-400 hover:bg-slate-100'}`}
+                                    title="Daten jetzt abgleichen"
+                                >
+                                    <span className={isSyncing ? 'animate-spin' : ''}>
+                                        <Icon name="RefreshCw" size={20} />
+                                    </span>
+                                </button>
+                                <span className="text-sm font-bold text-slate-600 hidden sm:inline">Hallo {user.name}</span>
+                                <button onClick={() => { setUser(null); localStorage.removeItem('leitner_session'); setView('auth'); }} className="text-slate-400 hover:text-red-500 transition-colors p-2">
                                     <Icon name="LogOut" size={20}/>
                                 </button>
                             </div>
@@ -236,6 +248,11 @@
                                         setCards(prev => [...prev, { id: tempId, lectureid: currentLecture.id, q, a, createdby: user.name, creatoruid: user.uid }]);
                                     });
                                 }}
+                                onEditCard={(cardId, q, a) => {
+                                    apiPostBackground('editCard', { cardId, q, a }, () => {
+                                        setCards(prev => prev.map(c => String(c.id) === String(cardId) ? { ...c, q, a } : c));
+                                    }, cardId);
+                                }}
                                 onToggleSelect={(cardId, active) => {
                                     apiPostBackground('toggleSelection', { cardId, active }, () => {
                                         setProgress(prev => {
@@ -273,7 +290,7 @@
                         <div className="flex justify-center mb-4 text-blue-600"><Icon name="UserCircle" size={48} /></div>
                         <h2 className="text-2xl font-black text-center mb-6">Einloggen</h2>
                         <div className="space-y-4">
-                            <input type="text" placeholder="Name" className="w-full p-3 border rounded-xl outline-none font-bold" value={name} onChange={e => setName(e.target.value)} />
+                            <input type="text" placeholder="Benutzername" className="w-full p-3 border rounded-xl outline-none font-bold" value={name} onChange={e => setName(e.target.value)} />
                             <input type="password" placeholder="Passwort" className="w-full p-3 border rounded-xl outline-none font-bold" value={pass} onChange={e => setPass(e.target.value)} />
                             {error && <p className="text-red-500 text-xs font-bold bg-red-50 p-2 rounded-lg leading-relaxed">{error}</p>}
                             <Button className="w-full py-3" onClick={() => onLogin(name, pass)}>Login</Button>
@@ -283,15 +300,16 @@
             );
         }
 
-        function LectureDetail({ lecture, cards, userProgress, onBack, onAddCard, onToggleSelect, onUpdateBox, onDeleteCard, userId, pendingSyncIds }) {
+        function LectureDetail({ lecture, cards, userProgress, onBack, onAddCard, onEditCard, onToggleSelect, onUpdateBox, onDeleteCard, userId, pendingSyncIds }) {
             const [tab, setTab] = useState('study');
             const [box, setBox] = useState(1);
             const [idx, setIdx] = useState(0);
             const [show, setShow] = useState(false);
             const [newQ, setNewQ] = useState('');
             const [newA, setNewA] = useState('');
+            const [editingCard, setEditingCard] = useState(null);
+            const [showOnlyOwn, setShowOnlyOwn] = useState(false);
 
-            // progMap enthält NUR die Fortschritte des aktuell angemeldeten Benutzers
             const progMap = useMemo(() => {
                 const m = {};
                 userProgress.forEach(p => {
@@ -304,6 +322,11 @@
 
             const activeCards = cards.filter(c => progMap[String(c.id)]?.active);
             const studyCards = activeCards.filter(c => (Number(progMap[String(c.id)]?.box) || 1) === box);
+
+            const filteredCardsForPool = useMemo(() => {
+                if (showOnlyOwn) return cards.filter(c => String(c.creatoruid) === String(userId));
+                return cards;
+            }, [cards, showOnlyOwn, userId]);
 
             useEffect(() => {
                 if (idx >= studyCards.length) {
@@ -324,12 +347,27 @@
                 }
             };
 
+            const handleBulkToggle = (type) => {
+                let targets = [];
+                if (type === 'all_on') targets = cards.filter(c => !progMap[String(c.id)]?.active);
+                if (type === 'all_off') targets = cards.filter(c => progMap[String(c.id)]?.active);
+                if (type === 'own_on') targets = cards.filter(c => String(c.creatoruid) === String(userId) && !progMap[String(c.id)]?.active);
+                
+                targets.forEach(c => onToggleSelect(c.id, type !== 'all_off'));
+            };
+
             const handleAdd = () => {
                 if(!newQ || !newA) return;
                 onAddCard(newQ, newA);
                 setNewQ(''); setNewA('');
                 const input = document.getElementById('question-input');
                 if (input) input.focus();
+            };
+
+            const handleEditSave = () => {
+                if (!editingCard) return;
+                onEditCard(editingCard.id, editingCard.q, editingCard.a);
+                setEditingCard(null);
             };
 
             return (
@@ -348,15 +386,19 @@
                         <div className="max-w-xl mx-auto space-y-6">
                             <div className="flex gap-2">
                                 {[1,2,3,4].map(b => (
-                                    <button key={b} onClick={() => {setBox(b); setIdx(0); setShow(false);}} className={`flex-1 p-3 rounded-xl border-2 transition-all ${box === b ? 'border-blue-600 bg-white shadow-lg' : 'opacity-40 bg-slate-100'}`}>
-                                        <div className="text-[10px] font-black uppercase text-slate-400">Box {b}</div>
+                                    <button 
+                                        key={b} 
+                                        onClick={() => {setBox(b); setIdx(0); setShow(false);}} 
+                                        className={`flex-1 p-3 rounded-xl border-b-4 transition-all box-${b}-ui ${box === b ? 'scale-105 shadow-md brightness-100' : 'opacity-40 brightness-95'}`}
+                                    >
+                                        <div className="text-[10px] font-black uppercase text-slate-500">Box {b}</div>
                                         <div className="text-xl font-black">{activeCards.filter(c => (Number(progMap[String(c.id)]?.box) || 1) === b).length}</div>
                                     </button>
                                 ))}
                             </div>
                             {studyCards.length > 0 && studyCards[idx] ? (
                                 <div className="space-y-4">
-                                    <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center min-h-[300px] flex flex-col justify-center items-center relative shadow-sm">
+                                    <div className={`bg-white rounded-2xl border-2 p-10 text-center min-h-[300px] flex flex-col justify-center items-center relative shadow-sm box-${box}-ui`}>
                                         <div className="absolute top-4 left-1/2 -translate-x-1/2 text-[10px] font-black text-slate-300 uppercase tracking-widest text-center w-full">Karte {idx + 1} von {studyCards.length}</div>
                                         <div className="text-xs font-black text-slate-300 uppercase mb-4">Frage</div>
                                         <div className="text-2xl font-bold text-slate-800 leading-tight">{studyCards[idx].q}</div>
@@ -376,42 +418,83 @@
                         </div>
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                            <div className="bg-white p-6 rounded-xl border border-slate-200 h-fit space-y-4 shadow-sm">
+                            <div className="bg-white p-6 rounded-xl border border-slate-200 h-fit space-y-4 shadow-sm sticky top-24">
                                 <h3 className="font-black text-blue-600 flex items-center gap-2"><Icon name="PlusCircle" size={18}/> Neue Karte</h3>
                                 <textarea id="question-input" placeholder="Frage..." className="w-full p-3 border rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all" rows="3" value={newQ} onChange={e => setNewQ(e.target.value)}/>
                                 <textarea placeholder="Antwort..." className="w-full p-3 border rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all" rows="3" value={newA} onChange={e => setNewA(e.target.value)}/>
                                 <Button className="w-full py-3" onClick={handleAdd}>Speichern</Button>
                             </div>
-                            <div className="md:col-span-2 space-y-3">
-                                {cards.map(c => {
+                            
+                            <div className="md:col-span-2 space-y-4">
+                                <div className="flex flex-wrap gap-2 mb-4">
+                                    <Button variant="outline" className="text-[10px] py-1" onClick={() => handleBulkToggle('all_on')} title="Alle Karten aktivieren">
+                                        <Icon name="CheckCheck" size={14}/> Alle an
+                                    </Button>
+                                    <Button variant="outline" className="text-[10px] py-1" onClick={() => handleBulkToggle('all_off')} title="Alle Karten deaktivieren">
+                                        <Icon name="X" size={14}/> Alle aus
+                                    </Button>
+                                    <Button variant="outline" className="text-[10px] py-1" onClick={() => handleBulkToggle('own_on')} title="Eigene Karten zum Stapel hinzufügen">
+                                        <Icon name="UserCheck" size={14}/> Eigene an
+                                    </Button>
+                                    <button 
+                                        onClick={() => setShowOnlyOwn(!showOnlyOwn)}
+                                        className={`ml-auto px-3 py-1 rounded-full text-[10px] font-black uppercase transition-all ${showOnlyOwn ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-500'}`}
+                                    >
+                                        {showOnlyOwn ? 'Nur Eigene' : 'Alle anzeigen'}
+                                    </button>
+                                </div>
+
+                                {filteredCardsForPool.map(c => {
                                     const isPending = pendingSyncIds.has(String(c.id));
                                     const isActive = progMap[String(c.id)]?.active;
+                                    const isOwn = String(c.creatoruid) === String(userId);
                                     
                                     return (
-                                        <div key={c.id} className={`bg-white p-4 rounded-xl border-l-8 transition-all shadow-sm ${isActive ? 'border-l-blue-600' : 'border-l-slate-200 opacity-60'}`}>
+                                        <div key={c.id} className={`bg-white p-4 rounded-xl border-l-8 transition-all shadow-sm ${isActive ? 'border-l-blue-600' : 'border-l-slate-200 opacity-60'} ${isPending ? 'animate-pulse' : ''}`}>
                                             <div className="flex justify-between items-start gap-4">
                                                 <div className="flex-1">
-                                                    <div className="font-bold text-slate-800">{c.q}</div>
-                                                    <div className="text-sm text-slate-400 mt-1 italic">{c.a}</div>
-                                                    <p className="text-[9px] uppercase font-black text-slate-300 mt-3">Erstellt von: {c.createdby || "Unbekannt"}</p>
+                                                    {editingCard?.id === c.id ? (
+                                                        <div className="space-y-2 animate-in">
+                                                            <input className="w-full p-2 border rounded-lg font-bold" value={editingCard.q} onChange={e => setEditingCard({...editingCard, q: e.target.value})} />
+                                                            <textarea className="w-full p-2 border rounded-lg text-sm" value={editingCard.a} onChange={e => setEditingCard({...editingCard, a: e.target.value})} rows="2" />
+                                                            <div className="flex gap-2">
+                                                                <Button className="py-1 text-xs" onClick={handleEditSave}>Sichern</Button>
+                                                                <Button variant="secondary" className="py-1 text-xs" onClick={() => setEditingCard(null)}>Abbruch</Button>
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        <>
+                                                            <div className="font-bold text-slate-800 leading-tight">{c.q}</div>
+                                                            <div className="text-sm text-slate-400 mt-1 italic leading-tight">{c.a}</div>
+                                                            <p className="text-[9px] uppercase font-black text-slate-300 mt-3 flex items-center gap-2">
+                                                                Von: {c.createdby || "Unbekannt"}
+                                                                {isOwn && <span className="bg-blue-50 text-blue-500 px-1.5 rounded-full text-[7px]">DU</span>}
+                                                            </p>
+                                                        </>
+                                                    )}
                                                 </div>
                                                 <div className="flex items-center gap-2">
+                                                    {!editingCard && isOwn && (
+                                                        <button onClick={() => setEditingCard(c)} className="p-2 text-slate-300 hover:text-blue-500 transition-colors">
+                                                            <Icon name="Pencil" size={16}/>
+                                                        </button>
+                                                    )}
                                                     <button 
                                                         disabled={isPending}
                                                         className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all border ${
                                                             isPending 
-                                                                ? 'bg-yellow-100 text-yellow-600 border-yellow-200 animate-pulse cursor-wait' 
+                                                                ? 'bg-yellow-100 text-yellow-600 border-yellow-200 cursor-wait animate-pulse' 
                                                                 : isActive 
                                                                     ? 'bg-blue-600 text-white border-blue-600 shadow-sm' 
                                                                     : 'bg-slate-50 text-slate-400 border-slate-200 hover:border-blue-200'
                                                         }`}
                                                         onClick={() => onToggleSelect(c.id, !isActive)}
                                                     >
-                                                        {isPending ? 'Synchronisiere...' : isActive ? 'Aktiv' : 'Wählen'}
+                                                        {isPending ? 'Sync...' : isActive ? 'Aktiv' : 'Wählen'}
                                                     </button>
-                                                    {(String(c.creatoruid) === String(userId)) && (
+                                                    {!editingCard && isOwn && (
                                                         <button onClick={() => onDeleteCard(c.id)} className="text-slate-300 hover:text-red-500 transition-colors p-1">
-                                                            <Icon name="Trash2" size={18}/>
+                                                            <Icon name="Trash2" size={16}/>
                                                         </button>
                                                     )}
                                                 </div>
@@ -419,6 +502,9 @@
                                         </div>
                                     );
                                 })}
+                                {filteredCardsForPool.length === 0 && (
+                                    <div className="text-center py-20 text-slate-400 font-bold border-2 border-dashed rounded-xl">Keine Karten gefunden.</div>
+                                )}
                             </div>
                         </div>
                     )}
